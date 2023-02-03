@@ -1,0 +1,4 @@
+This is a Brave Rewards publisher verification file.
+
+Domain: rusq.github.io
+Token: d7afe816d3df8ac2c3f67dc75ce2e65071be2710f5d1d45e0ef161c8e6696edc
