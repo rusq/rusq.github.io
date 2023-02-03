@@ -1,4 +1,3 @@
----
-layout: redirect
-redirect_url: https://github.com/rusq
----
+# Slackdump
+
+You may be searching for [Slackdump](https://github.com/rusq/slackdump).
