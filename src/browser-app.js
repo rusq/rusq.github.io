@@ -3,12 +3,208 @@ import {
   clearCell,
   createPlayState,
   getSolvedBannerVisible,
+  restorePlayState,
   setEntryMode,
   setSelectedCell,
   syncSolutionVisibility
 } from './ui.js';
 
-(function(){
+export const STORAGE_KEY = 'sudoku-generator-state-v1';
+
+function cloneGrid(grid){
+  return grid.map((row) => row.slice());
+}
+
+function isDigit(value){
+  return Number.isInteger(value) && value >= 0 && value <= 9;
+}
+
+function isCellDigit(value){
+  return Number.isInteger(value) && value >= 1 && value <= 9;
+}
+
+function isGrid(value){
+  return Array.isArray(value)
+    && value.length === 9
+    && value.every((row) => Array.isArray(row) && row.length === 9 && row.every(isDigit));
+}
+
+function isNotesGrid(value){
+  return Array.isArray(value)
+    && value.length === 9
+    && value.every((row) => Array.isArray(row)
+      && row.length === 9
+      && row.every((cell) => Array.isArray(cell)
+        && cell.every(isCellDigit)
+        && new Set(cell).size === cell.length));
+}
+
+function cloneNotesForStorage(notes){
+  return notes.map((row) => row.map((cell) => [...cell].sort((a, b) => a - b)));
+}
+
+function restoreNotesFromStorage(notes){
+  return notes.map((row) => row.map((cell) => new Set(cell)));
+}
+
+function isSelectedCell(value){
+  return value === null || (
+    value
+    && Number.isInteger(value.row)
+    && Number.isInteger(value.col)
+    && value.row >= 0
+    && value.row <= 8
+    && value.col >= 0
+    && value.col <= 8
+  );
+}
+
+function isEntryMode(value){
+  return value === 'final' || value === 'note';
+}
+
+function isAppMode(value){
+  return value === 'print' || value === 'fill';
+}
+
+function isPercent(value){
+  return Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
+function isSeedControl(value){
+  return typeof value === 'string';
+}
+
+function isPuzzleSeed(value){
+  return value === null || Number.isFinite(value);
+}
+
+function isBoolean(value){
+  return typeof value === 'boolean';
+}
+
+function isFiniteNumber(value){
+  return Number.isFinite(value);
+}
+
+export function buildSavedState({ appMode, controls, puzzleData, playState }){
+  return {
+    appMode,
+    controls: {
+      percent: controls.percent,
+      sym: controls.sym,
+      seed: controls.seed,
+      inclSol: controls.inclSol
+    },
+    puzzleData: {
+      puzzle: cloneGrid(puzzleData.puzzle),
+      solution: cloneGrid(puzzleData.solution),
+      removed: puzzleData.removed,
+      achieved: puzzleData.achieved,
+      seed: puzzleData.seed
+    },
+    playState: {
+      givens: cloneGrid(playState.givens),
+      solution: cloneGrid(playState.solution),
+      finals: cloneGrid(playState.finals),
+      notes: cloneNotesForStorage(playState.notes),
+      entryMode: playState.entryMode,
+      selectedCell: playState.selectedCell ? { ...playState.selectedCell } : null
+    }
+  };
+}
+
+export function normalizeSavedState(value){
+  if (!value || typeof value !== 'object') return null;
+
+  const { appMode, controls, puzzleData, playState } = value;
+  if (!isAppMode(appMode)) return null;
+  if (!controls || typeof controls !== 'object') return null;
+  if (!puzzleData || typeof puzzleData !== 'object') return null;
+  if (!playState || typeof playState !== 'object') return null;
+
+  if (!isPercent(controls.percent) || !isBoolean(controls.sym) || !isSeedControl(controls.seed) || !isBoolean(controls.inclSol)) {
+    return null;
+  }
+
+  if (!isGrid(puzzleData.puzzle)
+    || !isGrid(puzzleData.solution)
+    || !isFiniteNumber(puzzleData.removed)
+    || !isFiniteNumber(puzzleData.achieved)
+    || !isPuzzleSeed(puzzleData.seed)) {
+    return null;
+  }
+
+  if (!isGrid(playState.givens)
+    || !isGrid(playState.solution)
+    || !isGrid(playState.finals)
+    || !isNotesGrid(playState.notes)
+    || !isEntryMode(playState.entryMode)
+    || !isSelectedCell(playState.selectedCell)) {
+    return null;
+  }
+
+  return {
+    appMode,
+    controls: {
+      percent: controls.percent,
+      sym: controls.sym,
+      seed: controls.seed,
+      inclSol: controls.inclSol
+    },
+    puzzleData: {
+      puzzle: cloneGrid(puzzleData.puzzle),
+      solution: cloneGrid(puzzleData.solution),
+      removed: puzzleData.removed,
+      achieved: puzzleData.achieved,
+      seed: puzzleData.seed
+    },
+    playState: {
+      givens: cloneGrid(playState.givens),
+      solution: cloneGrid(playState.solution),
+      finals: cloneGrid(playState.finals),
+      notes: restoreNotesFromStorage(playState.notes),
+      entryMode: playState.entryMode,
+      selectedCell: playState.selectedCell ? { ...playState.selectedCell } : null
+    }
+  };
+}
+
+export function clearSavedState(storage = globalThis.localStorage){
+  if (!storage || typeof storage.removeItem !== 'function') return;
+  storage.removeItem(STORAGE_KEY);
+}
+
+export function loadAppState(storage = globalThis.localStorage){
+  if (!storage || typeof storage.getItem !== 'function') return null;
+
+  const raw = storage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeSavedState(parsed);
+    if (!normalized) clearSavedState(storage);
+    return normalized;
+  } catch {
+    clearSavedState(storage);
+    return null;
+  }
+}
+
+export function saveAppState(storage = globalThis.localStorage, snapshot){
+  if (!storage || typeof storage.setItem !== 'function' || !snapshot) return;
+  storage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+}
+
+function getNow(){
+  if (globalThis.performance && typeof globalThis.performance.now === 'function') {
+    return globalThis.performance.now();
+  }
+  return Date.now();
+}
+
+function initBrowserApp(){
   const { generateSolved, newRNG, removeCells } = globalThis.SudokuCore;
 
   const elPercent = document.getElementById('percent');
@@ -37,6 +233,54 @@ import {
   let appMode = 'print';
   let puzzleData = null;
   let playState = null;
+
+  function getControlsState(){
+    return {
+      percent: Number(elPercent.value),
+      sym: elSym.checked,
+      seed: elSeed.value,
+      inclSol: elInclSol.checked
+    };
+  }
+
+  function updatePercentLabel(){
+    elPercentLabel.textContent = `${elPercent.value}%`;
+  }
+
+  function applyControlsState(controls){
+    elPercent.value = String(controls.percent);
+    elSym.checked = controls.sym;
+    elSeed.value = controls.seed;
+    elInclSol.checked = controls.inclSol;
+    updatePercentLabel();
+  }
+
+  function syncModeInputs(){
+    for (const input of elModeInputs) input.checked = input.value === appMode;
+  }
+
+  function syncEntryModeInputs(){
+    for (const input of elEntryModeInputs) input.checked = !!playState && input.value === playState.entryMode;
+  }
+
+  function updateMetaText(){
+    if (!puzzleData) return;
+    elMeta.textContent = `Removed: ${puzzleData.removed} cells (${puzzleData.achieved.toFixed(1)}%). Seed: ${puzzleData.seed ?? 'random'}. Symmetry: ${elSym.checked ? 'on' : 'off'}.`;
+  }
+
+  function collectSnapshot(){
+    if (!puzzleData || !playState) return null;
+    return buildSavedState({
+      appMode,
+      controls: getControlsState(),
+      puzzleData,
+      playState
+    });
+  }
+
+  function persistCurrentState(){
+    saveAppState(globalThis.localStorage, collectSnapshot());
+  }
 
   function renderStaticGrid(container, grid){
     const table = document.createElement('table');
@@ -142,6 +386,7 @@ import {
 
   function setMode(mode){
     appMode = mode;
+    syncModeInputs();
     elApp.classList.toggle('mode-fill', mode === 'fill');
     elApp.classList.toggle('mode-print', mode === 'print');
     elEntryMode.classList.toggle('hidden', mode !== 'fill');
@@ -174,13 +419,20 @@ import {
     elStatus.textContent = `Play online mode ready. Entry mode: ${playState.entryMode === 'final' ? 'Final' : 'Note'}.${conflicts}`;
   }
 
+  function updatePrintStatus(isRestored = false){
+    if (!puzzleData) return;
+    elStatus.textContent = isRestored
+      ? 'Saved puzzle restored. Print mode ready.'
+      : 'Print mode ready. Generate a puzzle or print the current one.';
+  }
+
   function generate(){
-    const t0 = performance.now();
+    const t0 = getNow();
     const seedVal = elSeed.value === '' ? null : Number(elSeed.value);
     const rnd = newRNG(seedVal);
     const solution = generateSolved(rnd);
     const result = removeCells(rnd, solution, Number(elPercent.value), elSym.checked, 5);
-    const t1 = performance.now();
+    const t1 = getNow();
 
     puzzleData = {
       puzzle: result.puzzle,
@@ -191,11 +443,38 @@ import {
     };
     playState = createPlayState(result.puzzle, solution);
 
-    for (const input of elEntryModeInputs) input.checked = input.value === playState.entryMode;
-
-    elMeta.textContent = `Removed: ${result.removed} cells (${result.achieved.toFixed(1)}%). Seed: ${seedVal ?? 'random'}. Symmetry: ${elSym.checked ? 'on' : 'off'}.`;
+    syncEntryModeInputs();
+    updateMetaText();
     updateStatusMessage(t1 - t0);
     renderBoard();
+    persistCurrentState();
+  }
+
+  function restoreSession(savedState){
+    applyControlsState(savedState.controls);
+    puzzleData = savedState.puzzleData;
+    playState = restorePlayState(
+      savedState.playState.givens,
+      savedState.playState.solution,
+      savedState.playState.finals,
+      savedState.playState.notes,
+      savedState.playState.entryMode,
+      savedState.playState.selectedCell
+    );
+    syncEntryModeInputs();
+    updateMetaText();
+    setMode(savedState.appMode);
+    if (appMode === 'fill') updatePlayStatus();
+    else updatePrintStatus(true);
+  }
+
+  function restoreOrGenerate(){
+    const savedState = loadAppState(globalThis.localStorage);
+    if (savedState) {
+      restoreSession(savedState);
+      return;
+    }
+    generate();
   }
 
   function selectCellFromTarget(target){
@@ -206,6 +485,7 @@ import {
     const col = Number(cell.dataset.col);
     playState = setSelectedCell(playState, row, col);
     renderBoard();
+    persistCurrentState();
   }
 
   function handleBoardKeydown(event){
@@ -217,6 +497,7 @@ import {
       event.preventDefault();
       updatePlayStatus();
       renderBoard();
+      persistCurrentState();
       return;
     }
 
@@ -225,6 +506,7 @@ import {
       event.preventDefault();
       updatePlayStatus();
       renderBoard();
+      persistCurrentState();
       return;
     }
 
@@ -242,21 +524,31 @@ import {
     playState = setSelectedCell(playState, nextRow, nextCol);
     event.preventDefault();
     renderBoard();
+    persistCurrentState();
   }
 
   elPercent.addEventListener('input', () => {
-    elPercentLabel.textContent = `${elPercent.value}%`;
+    updatePercentLabel();
+    persistCurrentState();
   });
 
+  elSym.addEventListener('change', persistCurrentState);
+
+  elSeed.addEventListener('input', persistCurrentState);
+
   elBtnSeed.addEventListener('click', () => {
-    elSeed.value = Math.floor(Math.random() * 1e9);
+    elSeed.value = String(Math.floor(Math.random() * 1e9));
+    persistCurrentState();
   });
 
   elBtnPrint.addEventListener('click', () => {
     window.print();
   });
 
-  elInclSol.addEventListener('change', applySolutionVisibility);
+  elInclSol.addEventListener('change', () => {
+    applySolutionVisibility();
+    persistCurrentState();
+  });
   elBtnGen.addEventListener('click', generate);
   elSolvedGenerate.addEventListener('click', generate);
   elPuzzle.addEventListener('click', (event) => {
@@ -269,7 +561,8 @@ import {
       if (input.checked) {
         setMode(input.value);
         if (appMode === 'fill') updatePlayStatus();
-        else if (puzzleData) elStatus.textContent = 'Print mode ready. Generate a puzzle or print the current one.';
+        else updatePrintStatus();
+        persistCurrentState();
       }
     });
   }
@@ -279,10 +572,15 @@ import {
       if (!input.checked || !playState) return;
       playState = setEntryMode(playState, input.value);
       updatePlayStatus();
+      persistCurrentState();
     });
   }
 
   setMode('print');
   applySolutionVisibility();
-  generate();
-})();
+  restoreOrGenerate();
+}
+
+if (typeof document !== 'undefined') {
+  initBrowserApp();
+}

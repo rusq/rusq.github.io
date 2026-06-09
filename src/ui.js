@@ -117,6 +117,19 @@ export function createPlayState(givens, solution){
   });
 }
 
+export function restorePlayState(givens, solution, finals, notes, entryMode, selectedCell){
+  return deriveState({
+    givens: cloneGrid(givens),
+    solution: cloneGrid(solution),
+    finals: cloneGrid(finals),
+    notes: cloneNotes(notes),
+    entryMode,
+    selectedCell: selectedCell ? { row: selectedCell.row, col: selectedCell.col } : null,
+    conflicts: new Set(),
+    isSolved: false
+  });
+}
+
 export function setSelectedCell(state, row, col){
   return {
     ...state,
