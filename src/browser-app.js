@@ -157,7 +157,7 @@ import {
     if (!puzzleData) return;
 
     const modeText = appMode === 'fill'
-      ? `Fill online mode ready. Entry mode: ${playState.entryMode === 'final' ? 'Final' : 'Note'}.`
+      ? `Play online mode ready. Entry mode: ${playState.entryMode === 'final' ? 'Final' : 'Note'}.`
       : 'Unique-solution ensured.';
     elStatus.textContent = `Generated in ${durationMs.toFixed(0)} ms. ${modeText}`;
   }
@@ -171,7 +171,7 @@ import {
     }
 
     const conflicts = playState.conflicts.size > 0 ? ' Conflicts are highlighted.' : '';
-    elStatus.textContent = `Fill online mode ready. Entry mode: ${playState.entryMode === 'final' ? 'Final' : 'Note'}.${conflicts}`;
+    elStatus.textContent = `Play online mode ready. Entry mode: ${playState.entryMode === 'final' ? 'Final' : 'Note'}.${conflicts}`;
   }
 
   function generate(){
