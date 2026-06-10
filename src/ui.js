@@ -1,3 +1,19 @@
+export const DIFFICULTY_PRESETS = [
+  { id: 'easy', label: 'Easy', percent: 45 },
+  { id: 'medium', label: 'Medium', percent: 58 },
+  { id: 'hard', label: 'Hard', percent: 68 }
+];
+
+export function percentForPreset(id){
+  const preset = DIFFICULTY_PRESETS.find((p) => p.id === id);
+  return preset ? preset.percent : null;
+}
+
+export function presetForPercent(percent){
+  const preset = DIFFICULTY_PRESETS.find((p) => p.percent === percent);
+  return preset ? preset.id : 'custom';
+}
+
 export function syncSolutionVisibility(solutionBlock, includeSolution){
   solutionBlock.classList.toggle('visible', includeSolution);
   solutionBlock.classList.toggle('hidden', !includeSolution);
@@ -73,6 +89,37 @@ export function findConflicts(grid){
   return createConflictSet(groups);
 }
 
+export function getHighlights(state){
+  const sameValue = new Set();
+  const peers = new Set();
+  if (!state.selectedCell) return { sameValue, peers };
+
+  const { row, col } = state.selectedCell;
+  for (let i = 0; i < 9; i++){
+    peers.add(cellKey(row, i));
+    peers.add(cellKey(i, col));
+  }
+  const boxRow = Math.floor(row / 3) * 3;
+  const boxCol = Math.floor(col / 3) * 3;
+  for (let r = boxRow; r < boxRow + 3; r++){
+    for (let c = boxCol; c < boxCol + 3; c++) peers.add(cellKey(r, c));
+  }
+  peers.delete(cellKey(row, col));
+
+  const grid = buildFinalGrid(state.givens, state.finals);
+  const value = grid[row][col];
+  if (value !== 0) {
+    for (let r = 0; r < 9; r++){
+      for (let c = 0; c < 9; c++){
+        if (grid[r][c] === value) sameValue.add(cellKey(r, c));
+      }
+    }
+    sameValue.delete(cellKey(row, col));
+  }
+
+  return { sameValue, peers };
+}
+
 export function hasAllEditableCellsFilled(givens, finals){
   for (let row = 0; row < 9; row++){
     for (let col = 0; col < 9; col++){
@@ -142,6 +189,11 @@ export function setEntryMode(state, entryMode){
     ...state,
     entryMode
   };
+}
+
+export function pushHistory(history, entry, cap){
+  const next = history.concat([entry]);
+  return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
 export function getSolvedBannerVisible(state){

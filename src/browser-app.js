@@ -2,7 +2,11 @@ import {
   applyDigitToCell,
   clearCell,
   createPlayState,
+  getHighlights,
   getSolvedBannerVisible,
+  percentForPreset,
+  presetForPercent,
+  pushHistory,
   restorePlayState,
   setEntryMode,
   setSelectedCell,
@@ -87,6 +91,25 @@ function isFiniteNumber(value){
   return Number.isFinite(value);
 }
 
+const PER_PAGE_VALUES = [1, 2, 4];
+
+function normalizePerPage(value){
+  return PER_PAGE_VALUES.includes(value) ? value : 1;
+}
+
+function normalizeExtras(value){
+  if (!Array.isArray(value)) return [];
+  const valid = value.every((entry) => entry
+    && typeof entry === 'object'
+    && isGrid(entry.puzzle)
+    && isGrid(entry.solution));
+  if (!valid) return [];
+  return value.map((entry) => ({
+    puzzle: cloneGrid(entry.puzzle),
+    solution: cloneGrid(entry.solution)
+  }));
+}
+
 export function buildSavedState({ appMode, controls, puzzleData, playState }){
   return {
     appMode,
@@ -94,14 +117,19 @@ export function buildSavedState({ appMode, controls, puzzleData, playState }){
       percent: controls.percent,
       sym: controls.sym,
       seed: controls.seed,
-      inclSol: controls.inclSol
+      inclSol: controls.inclSol,
+      perPage: controls.perPage ?? 1
     },
     puzzleData: {
       puzzle: cloneGrid(puzzleData.puzzle),
       solution: cloneGrid(puzzleData.solution),
       removed: puzzleData.removed,
       achieved: puzzleData.achieved,
-      seed: puzzleData.seed
+      seed: puzzleData.seed,
+      extras: (puzzleData.extras ?? []).map((entry) => ({
+        puzzle: cloneGrid(entry.puzzle),
+        solution: cloneGrid(entry.solution)
+      }))
     },
     playState: {
       givens: cloneGrid(playState.givens),
@@ -150,14 +178,16 @@ export function normalizeSavedState(value){
       percent: controls.percent,
       sym: controls.sym,
       seed: controls.seed,
-      inclSol: controls.inclSol
+      inclSol: controls.inclSol,
+      perPage: normalizePerPage(controls.perPage)
     },
     puzzleData: {
       puzzle: cloneGrid(puzzleData.puzzle),
       solution: cloneGrid(puzzleData.solution),
       removed: puzzleData.removed,
       achieved: puzzleData.achieved,
-      seed: puzzleData.seed
+      seed: puzzleData.seed,
+      extras: normalizeExtras(puzzleData.extras)
     },
     playState: {
       givens: cloneGrid(playState.givens),
@@ -222,6 +252,7 @@ function initBrowserApp(){
   const elSolBlock = document.getElementById('solutionBlock');
   const elApp = document.body;
   const elModeInputs = Array.from(document.querySelectorAll('input[name="mode"]'));
+  const elDifficultyInputs = Array.from(document.querySelectorAll('input[name="difficulty"]'));
   const elEntryMode = document.getElementById('entryMode');
   const elEntryModeInputs = Array.from(document.querySelectorAll('input[name="entryMode"]'));
   const elPrintOptions = document.getElementById('printOptions');
@@ -229,22 +260,39 @@ function initBrowserApp(){
   const elSolvedGenerate = document.getElementById('btnSolvedGenerate');
   const elLegendPrint = document.getElementById('legendPrint');
   const elLegendOnline = document.getElementById('legendOnline');
+  const elNumberPad = document.getElementById('numberPad');
+  const elPadNote = document.getElementById('padNote');
+  const elPerPage = document.getElementById('perPage');
+  const elPrintSheet = document.getElementById('printSheet');
+
+  const HISTORY_CAP = 100;
 
   let appMode = 'print';
   let puzzleData = null;
   let playState = null;
+  let playHistory = [];
 
   function getControlsState(){
     return {
       percent: Number(elPercent.value),
       sym: elSym.checked,
       seed: elSeed.value,
-      inclSol: elInclSol.checked
+      inclSol: elInclSol.checked,
+      perPage: Number(elPerPage.value)
     };
+  }
+
+  function syncMultiPrintClass(){
+    document.body.classList.toggle('multi-print', Number(elPerPage.value) > 1);
   }
 
   function updatePercentLabel(){
     elPercentLabel.textContent = `${elPercent.value}%`;
+  }
+
+  function syncDifficultyInputs(){
+    const preset = presetForPercent(Number(elPercent.value));
+    for (const input of elDifficultyInputs) input.checked = input.value === preset;
   }
 
   function applyControlsState(controls){
@@ -252,7 +300,10 @@ function initBrowserApp(){
     elSym.checked = controls.sym;
     elSeed.value = controls.seed;
     elInclSol.checked = controls.inclSol;
+    elPerPage.value = String(controls.perPage ?? 1);
     updatePercentLabel();
+    syncDifficultyInputs();
+    syncMultiPrintClass();
   }
 
   function syncModeInputs(){
@@ -261,6 +312,7 @@ function initBrowserApp(){
 
   function syncEntryModeInputs(){
     for (const input of elEntryModeInputs) input.checked = !!playState && input.value === playState.entryMode;
+    elPadNote.setAttribute('aria-pressed', playState && playState.entryMode === 'note' ? 'true' : 'false');
   }
 
   function updateMetaText(){
@@ -313,6 +365,7 @@ function initBrowserApp(){
   function renderOnlineGrid(container, state){
     const table = document.createElement('table');
     const finalGrid = state.givens.map((row, rowIndex) => row.map((value, colIndex) => value || state.finals[rowIndex][colIndex]));
+    const highlights = getHighlights(state);
 
     for (let row = 0; row < 9; row++){
       const tr = document.createElement('tr');
@@ -323,18 +376,26 @@ function initBrowserApp(){
         const isGiven = state.givens[row][col] !== 0;
         const isSelected = state.selectedCell && state.selectedCell.row === row && state.selectedCell.col === col;
         const key = `${row}:${col}`;
+        const hasConflict = state.conflicts.has(key);
+
+        const labelParts = [`Row ${row + 1}, column ${col + 1}`];
+        if (value === 0) labelParts.push('empty');
+        else labelParts.push(`value ${value}`, isGiven ? 'given' : 'entered');
+        if (hasConflict) labelParts.push('conflict');
 
         button.type = 'button';
         button.className = 'cell';
         button.dataset.row = String(row);
         button.dataset.col = String(col);
-        button.setAttribute('aria-label', `Row ${row + 1}, column ${col + 1}`);
+        button.setAttribute('aria-label', labelParts.join(', '));
         button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
 
         if (isGiven) button.classList.add('given');
         else button.classList.add('editable');
+        if (highlights.peers.has(key)) button.classList.add('peer');
+        if (highlights.sameValue.has(key)) button.classList.add('same-value');
         if (isSelected) button.classList.add('selected');
-        if (state.conflicts.has(key)) button.classList.add('conflict');
+        if (hasConflict) button.classList.add('conflict');
 
         if (value !== 0) {
           const span = document.createElement('span');
@@ -373,6 +434,62 @@ function initBrowserApp(){
     elSolvedBanner.classList.toggle('hidden', !visible);
   }
 
+  function renderPrintSheet(){
+    elPrintSheet.innerHTML = '';
+    if (!puzzleData) return;
+
+    const perPage = Number(elPerPage.value);
+    if (perPage <= 1) return;
+
+    const entries = [
+      { puzzle: puzzleData.puzzle, solution: puzzleData.solution },
+      ...(puzzleData.extras ?? [])
+    ].slice(0, perPage);
+
+    function appendSection(titleText, gridKey){
+      const title = document.createElement('div');
+      title.className = 'sheet-title';
+      title.textContent = titleText;
+      elPrintSheet.appendChild(title);
+
+      const grids = document.createElement('div');
+      grids.className = `sheet-grids per-${perPage}`;
+      for (const entry of entries){
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        renderStaticGrid(grid, entry[gridKey]);
+        grids.appendChild(grid);
+      }
+      elPrintSheet.appendChild(grids);
+    }
+
+    appendSection('Sudoku', 'puzzle');
+
+    if (elInclSol.checked) {
+      const pageBreak = document.createElement('div');
+      pageBreak.className = 'page-break';
+      elPrintSheet.appendChild(pageBreak);
+      appendSection('Solutions', 'solution');
+    }
+  }
+
+  function buildExtras(rnd, count){
+    const extras = [];
+    for (let i = 0; i < count; i++){
+      const solved = generateSolved(rnd);
+      const result = removeCells(rnd, solved, Number(elPercent.value), elSym.checked, 5);
+      extras.push({ puzzle: result.puzzle, solution: solved });
+    }
+    return extras;
+  }
+
+  function ensureExtras(){
+    if (!puzzleData) return;
+    const needed = Number(elPerPage.value) - 1 - (puzzleData.extras?.length ?? 0);
+    if (needed <= 0) return;
+    puzzleData.extras = (puzzleData.extras ?? []).concat(buildExtras(newRNG(null), needed));
+  }
+
   function renderBoard(){
     if (!puzzleData) return;
 
@@ -382,6 +499,7 @@ function initBrowserApp(){
     renderStaticGrid(elSolution, puzzleData.solution);
     applySolutionVisibility();
     renderSolvedBanner();
+    renderPrintSheet();
   }
 
   function setMode(mode){
@@ -390,6 +508,7 @@ function initBrowserApp(){
     elApp.classList.toggle('mode-fill', mode === 'fill');
     elApp.classList.toggle('mode-print', mode === 'print');
     elEntryMode.classList.toggle('hidden', mode !== 'fill');
+    elNumberPad.classList.toggle('hidden', mode !== 'fill');
     elPrintOptions.classList.toggle('hidden', mode !== 'print');
     elBtnPrint.classList.toggle('hidden', mode !== 'print');
     elLegendPrint.classList.toggle('hidden', mode !== 'print');
@@ -439,9 +558,11 @@ function initBrowserApp(){
       solution,
       removed: result.removed,
       achieved: result.achieved,
-      seed: seedVal
+      seed: seedVal,
+      extras: buildExtras(rnd, Number(elPerPage.value) - 1)
     };
     playState = createPlayState(result.puzzle, solution);
+    playHistory = [];
 
     syncEntryModeInputs();
     updateMetaText();
@@ -461,6 +582,7 @@ function initBrowserApp(){
       savedState.playState.entryMode,
       savedState.playState.selectedCell
     );
+    playHistory = [];
     syncEntryModeInputs();
     updateMetaText();
     setMode(savedState.appMode);
@@ -488,25 +610,75 @@ function initBrowserApp(){
     persistCurrentState();
   }
 
-  function handleBoardKeydown(event){
+  function applyInput(action){
     if (appMode !== 'fill' || !playState || !playState.selectedCell) return;
 
     const { row, col } = playState.selectedCell;
-    if (/^[1-9]$/.test(event.key)) {
-      playState = applyDigitToCell(playState, row, col, Number(event.key));
+    const next = action === 'erase'
+      ? clearCell(playState, row, col)
+      : applyDigitToCell(playState, row, col, action);
+    if (next === playState) return;
+
+    playHistory = pushHistory(playHistory, playState, HISTORY_CAP);
+    playState = next;
+    updatePlayStatus();
+    renderBoard();
+    persistCurrentState();
+  }
+
+  function undoInput(){
+    if (appMode !== 'fill' || playHistory.length === 0) return;
+
+    playState = playHistory[playHistory.length - 1];
+    playHistory = playHistory.slice(0, -1);
+    syncEntryModeInputs();
+    updatePlayStatus();
+    renderBoard();
+    persistCurrentState();
+  }
+
+  function toggleEntryMode(){
+    if (appMode !== 'fill' || !playState) return;
+
+    playState = setEntryMode(playState, playState.entryMode === 'note' ? 'final' : 'note');
+    syncEntryModeInputs();
+    updatePlayStatus();
+    persistCurrentState();
+  }
+
+  function handleBoardKeydown(event){
+    if (appMode !== 'fill' || !playState) return;
+
+    if ((event.key === 'z' || event.key === 'Z') && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      updatePlayStatus();
-      renderBoard();
-      persistCurrentState();
+      undoInput();
+      return;
+    }
+
+    if (event.key === 'u' || event.key === 'U') {
+      event.preventDefault();
+      undoInput();
+      return;
+    }
+
+    if (event.key === 'n' || event.key === 'N') {
+      event.preventDefault();
+      toggleEntryMode();
+      return;
+    }
+
+    if (!playState.selectedCell) return;
+
+    const { row, col } = playState.selectedCell;
+    if (/^[1-9]$/.test(event.key)) {
+      event.preventDefault();
+      applyInput(Number(event.key));
       return;
     }
 
     if (event.key === 'Backspace' || event.key === 'Delete' || event.key === '0') {
-      playState = clearCell(playState, row, col);
       event.preventDefault();
-      updatePlayStatus();
-      renderBoard();
-      persistCurrentState();
+      applyInput('erase');
       return;
     }
 
@@ -529,8 +701,21 @@ function initBrowserApp(){
 
   elPercent.addEventListener('input', () => {
     updatePercentLabel();
+    syncDifficultyInputs();
     persistCurrentState();
   });
+
+  for (const input of elDifficultyInputs){
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      const percent = percentForPreset(input.value);
+      if (percent !== null) {
+        elPercent.value = String(percent);
+        updatePercentLabel();
+      }
+      persistCurrentState();
+    });
+  }
 
   elSym.addEventListener('change', persistCurrentState);
 
@@ -542,11 +727,22 @@ function initBrowserApp(){
   });
 
   elBtnPrint.addEventListener('click', () => {
+    ensureExtras();
+    renderPrintSheet();
+    persistCurrentState();
     window.print();
   });
 
   elInclSol.addEventListener('change', () => {
     applySolutionVisibility();
+    renderPrintSheet();
+    persistCurrentState();
+  });
+
+  elPerPage.addEventListener('change', () => {
+    syncMultiPrintClass();
+    ensureExtras();
+    renderPrintSheet();
     persistCurrentState();
   });
   elBtnGen.addEventListener('click', generate);
@@ -555,6 +751,15 @@ function initBrowserApp(){
     selectCellFromTarget(event.target);
   });
   elPuzzle.addEventListener('keydown', handleBoardKeydown);
+  elNumberPad.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+
+    if (button.dataset.digit) applyInput(Number(button.dataset.digit));
+    else if (button.dataset.action === 'erase') applyInput('erase');
+    else if (button.dataset.action === 'note') toggleEntryMode();
+    else if (button.dataset.action === 'undo') undoInput();
+  });
 
   for (const input of elModeInputs){
     input.addEventListener('change', () => {
@@ -571,6 +776,7 @@ function initBrowserApp(){
     input.addEventListener('change', () => {
       if (!input.checked || !playState) return;
       playState = setEntryMode(playState, input.value);
+      syncEntryModeInputs();
       updatePlayStatus();
       persistCurrentState();
     });
@@ -578,6 +784,7 @@ function initBrowserApp(){
 
   setMode('print');
   applySolutionVisibility();
+  syncDifficultyInputs();
   restoreOrGenerate();
 }
 

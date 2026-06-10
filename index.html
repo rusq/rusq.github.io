@@ -101,6 +101,8 @@
       z-index:1;
     }
     .cell.given{background:#f8fafc}
+    .cell.peer{background:#eef2f7}
+    .cell.same-value{background:#dbeafe}
     .cell.conflict{background:var(--danger-soft)}
     .cell-value{font-size:clamp(22px, 5.2vw, 38px); line-height:1}
     .given-value{font-weight:800}
@@ -111,6 +113,18 @@
       align-items:center; justify-items:center;
       font-size:clamp(9px, 1.7vw, 14px); color:#475569;
     }
+
+    .number-pad{
+      display:grid; grid-template-columns:repeat(9, minmax(0, 1fr)); gap:6px;
+      width:min(92vw, 650px);
+    }
+    .number-pad button{
+      padding:10px 0; border-radius:10px; font-size:18px; font-weight:700;
+      background:var(--grid-soft); color:#0b1020;
+    }
+    .number-pad .pad-action{grid-column:span 3; font-size:14px}
+    .number-pad .pad-action[aria-pressed="true"]{background:var(--accent)}
+    .number-pad.hidden{display:none}
 
     .inline-panel{
       display:grid; gap:10px; padding:14px 16px; border-radius:14px;
@@ -125,6 +139,8 @@
 
     .solution{display:none}
     .solution.visible{display:block}
+
+    .print-sheet{display:none}
 
     .footnote{color:var(--muted); font-size:12px; margin-top:8px}
 
@@ -150,6 +166,26 @@
           </label>
         </div>
 
+        <label>Difficulty</label>
+        <div class="choice-group">
+          <label class="choice" for="diffEasy">
+            <input id="diffEasy" type="radio" name="difficulty" value="easy" />
+            <span>Easy</span>
+          </label>
+          <label class="choice" for="diffMedium">
+            <input id="diffMedium" type="radio" name="difficulty" value="medium" />
+            <span>Medium</span>
+          </label>
+          <label class="choice" for="diffHard">
+            <input id="diffHard" type="radio" name="difficulty" value="hard" />
+            <span>Hard</span>
+          </label>
+          <label class="choice" for="diffCustom">
+            <input id="diffCustom" type="radio" name="difficulty" value="custom" checked />
+            <span>Custom</span>
+          </label>
+        </div>
+
         <label for="percent">Cells removed (difficulty): <span id="percentLabel">60%</span></label>
         <input id="percent" type="range" min="10" max="79" value="60" step="1" aria-describedby="percentHelp" />
         <div id="percentHelp" class="footnote">Unique-solution puzzles need at least 17 clues → at most 79% can be removed.</div>
@@ -164,6 +200,13 @@
 
         <div class="stack" id="printOptions">
           <label class="row" for="inclSol"> <input id="inclSol" type="checkbox" /> <span>Include solution page when printing</span></label>
+          <label class="row" for="perPage"> <span>Puzzles per page</span>
+            <select id="perPage">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+            </select>
+          </label>
         </div>
 
         <div class="stack hidden" id="entryMode">
@@ -184,7 +227,7 @@
           <button id="btnGenerate" title="Generate a new puzzle and show it">Generate puzzle</button>
           <button class="secondary" id="btnPrint" title="Open the browser's print dialog">Print</button>
         </div>
-        <div class="status" id="status">Ready.</div>
+        <div class="status" id="status" role="status">Ready.</div>
       </div>
     </section>
 
@@ -197,19 +240,37 @@
       </div>
       <div class="grid" id="puzzle"></div>
 
+      <div class="number-pad no-print hidden" id="numberPad">
+        <button type="button" data-digit="1">1</button>
+        <button type="button" data-digit="2">2</button>
+        <button type="button" data-digit="3">3</button>
+        <button type="button" data-digit="4">4</button>
+        <button type="button" data-digit="5">5</button>
+        <button type="button" data-digit="6">6</button>
+        <button type="button" data-digit="7">7</button>
+        <button type="button" data-digit="8">8</button>
+        <button type="button" data-digit="9">9</button>
+        <button type="button" class="pad-action" data-action="erase" aria-label="Erase selected cell">Erase</button>
+        <button type="button" class="pad-action" data-action="note" id="padNote" aria-pressed="false" aria-label="Toggle note entry mode">Note</button>
+        <button type="button" class="pad-action" data-action="undo" aria-label="Undo last entry">Undo</button>
+      </div>
+
       <div class="solution hidden" id="solutionBlock">
         <div class="page-break"></div>
         <div class="print-title">Solution</div>
         <div class="grid" id="solution"></div>
       </div>
 
+      <div class="print-sheet" id="printSheet"></div>
+
       <div class="legend no-print" id="legendPrint">
         <span>Blank = empty cell</span>
         <span>Bold lines = 3×3 boxes</span>
       </div>
       <div class="legend no-print hidden" id="legendOnline">
-        <span>Click a cell, then type 1–9</span>
-        <span>Backspace/Delete clears</span>
+        <span>Tap a cell, then tap or type 1–9</span>
+        <span>N toggles notes</span>
+        <span>Ctrl+Z or U undoes</span>
       </div>
     </section>
   </div>

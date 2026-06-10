@@ -2,13 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  DIFFICULTY_PRESETS,
   applyDigitToCell,
   clearCell,
   createPlayState,
   findConflicts,
+  getHighlights,
   getSolvedBannerVisible,
+  percentForPreset,
+  presetForPercent,
+  pushHistory,
   restorePlayState,
   setEntryMode,
+  setSelectedCell,
   syncSolutionVisibility
 } from '../src/ui.js';
 import {
@@ -73,6 +79,79 @@ test('solution visibility becomes visible when enabled', () => {
   syncSolutionVisibility(el, true);
   assert.equal(el.classList.contains('visible'), true);
   assert.equal(el.classList.contains('hidden'), false);
+});
+
+test('each difficulty preset maps to its percent and back', () => {
+  assert.ok(DIFFICULTY_PRESETS.length >= 3);
+  for (const preset of DIFFICULTY_PRESETS){
+    assert.equal(percentForPreset(preset.id), preset.percent);
+    assert.equal(presetForPercent(preset.percent), preset.id);
+  }
+});
+
+test('presetForPercent falls back to custom for unmatched percents', () => {
+  assert.equal(presetForPercent(50), 'custom');
+  assert.equal(presetForPercent(79), 'custom');
+});
+
+test('percentForPreset returns null for custom and unknown ids', () => {
+  assert.equal(percentForPreset('custom'), null);
+  assert.equal(percentForPreset('bogus'), null);
+});
+
+test('getHighlights returns empty sets without a selection', () => {
+  const state = createPlayState(puzzle, solution);
+  const { sameValue, peers } = getHighlights(state);
+  assert.equal(sameValue.size, 0);
+  assert.equal(peers.size, 0);
+});
+
+test('getHighlights marks row, column, and box peers of the selection', () => {
+  let state = createPlayState(puzzle, solution);
+  state = setSelectedCell(state, 0, 1);
+  const { sameValue, peers } = getHighlights(state);
+
+  assert.equal(sameValue.size, 0);
+  assert.equal(peers.size, 20);
+  assert.ok(peers.has('0:0'));
+  assert.ok(peers.has('8:1'));
+  assert.ok(peers.has('1:2'));
+  assert.equal(peers.has('0:1'), false);
+});
+
+test('getHighlights marks all cells sharing the selected value', () => {
+  let state = createPlayState(puzzle, solution);
+  state = setSelectedCell(state, 0, 0);
+  const { sameValue } = getHighlights(state);
+
+  assert.deepEqual(
+    [...sameValue].sort(),
+    ['1:5', '2:6', '3:1', '5:7', '6:3', '7:8', '8:2']
+  );
+});
+
+test('getHighlights counts player-entered finals as same-value matches', () => {
+  let state = createPlayState(puzzle, solution);
+  state = applyDigitToCell(state, 4, 4, 5);
+  state = setSelectedCell(state, 0, 0);
+  const { sameValue } = getHighlights(state);
+
+  assert.ok(sameValue.has('4:4'));
+});
+
+test('pushHistory appends without mutating the original array', () => {
+  const history = ['a'];
+  const next = pushHistory(history, 'b', 10);
+
+  assert.deepEqual(next, ['a', 'b']);
+  assert.deepEqual(history, ['a']);
+});
+
+test('pushHistory drops the oldest entries beyond the cap', () => {
+  let history = [];
+  for (let i = 0; i < 5; i++) history = pushHistory(history, i, 3);
+
+  assert.deepEqual(history, [2, 3, 4]);
 });
 
 test('findConflicts marks every conflicting cell in a row', () => {
@@ -220,6 +299,63 @@ test('restorePlayState recomputes conflicts and solved state', () => {
   assert.equal(restored.isSolved, true);
 });
 
+test('normalizeSavedState defaults perPage and extras for legacy payloads', () => {
+  const state = createPlayState(puzzle, solution);
+  const saved = buildSavedState({
+    appMode: 'print',
+    controls: { percent: 60, sym: true, seed: '', inclSol: false },
+    puzzleData: { puzzle, solution, removed: 2, achieved: 2.5, seed: null },
+    playState: state
+  });
+  delete saved.controls.perPage;
+  delete saved.puzzleData.extras;
+
+  const restored = normalizeSavedState(saved);
+  assert.ok(restored);
+  assert.equal(restored.controls.perPage, 1);
+  assert.deepEqual(restored.puzzleData.extras, []);
+});
+
+test('normalizeSavedState preserves valid perPage and extra puzzles', () => {
+  const state = createPlayState(puzzle, solution);
+  const saved = buildSavedState({
+    appMode: 'print',
+    controls: { percent: 60, sym: true, seed: '', inclSol: true, perPage: 4 },
+    puzzleData: {
+      puzzle,
+      solution,
+      removed: 2,
+      achieved: 2.5,
+      seed: null,
+      extras: [{ puzzle, solution }, { puzzle, solution }, { puzzle, solution }]
+    },
+    playState: state
+  });
+
+  const restored = normalizeSavedState(saved);
+  assert.ok(restored);
+  assert.equal(restored.controls.perPage, 4);
+  assert.equal(restored.puzzleData.extras.length, 3);
+  assert.deepEqual(restored.puzzleData.extras[0].puzzle, puzzle);
+});
+
+test('normalizeSavedState falls back on invalid perPage and extras', () => {
+  const state = createPlayState(puzzle, solution);
+  const saved = buildSavedState({
+    appMode: 'print',
+    controls: { percent: 60, sym: true, seed: '', inclSol: false },
+    puzzleData: { puzzle, solution, removed: 2, achieved: 2.5, seed: null },
+    playState: state
+  });
+  saved.controls.perPage = 3;
+  saved.puzzleData.extras = [{ puzzle: 'bogus', solution }];
+
+  const restored = normalizeSavedState(saved);
+  assert.ok(restored);
+  assert.equal(restored.controls.perPage, 1);
+  assert.deepEqual(restored.puzzleData.extras, []);
+});
+
 test('normalizeSavedState rejects invalid persisted payloads', () => {
   const invalid = {
     appMode: 'bogus',
@@ -271,7 +407,7 @@ test('loadAppState returns saved snapshot and preserves controls and state', () 
 
   const restored = loadAppState(storage);
   assert.equal(restored.appMode, 'fill');
-  assert.deepEqual(restored.controls, { percent: 55, sym: false, seed: '777', inclSol: true });
+  assert.deepEqual(restored.controls, { percent: 55, sym: false, seed: '777', inclSol: true, perPage: 1 });
   assert.deepEqual([...restored.playState.notes[0][1]], [3]);
 });
 
